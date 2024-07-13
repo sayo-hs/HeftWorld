@@ -33,6 +33,8 @@ import Data.Functor ((<&>))
 import Data.Hefty.Extensible (MemberBy, type (<|))
 import Data.Kind (Type)
 import Data.Map (Map)
+import Data.NonEmptyText (NonEmptyText)
+import Data.NonEmptyText qualified as NE
 import Data.Text (Text)
 import Data.Word (Word8)
 import Linear (V2, V4)
@@ -45,7 +47,7 @@ data Graphics' (image :: Type) (font :: Type) a where
     DrawImage :: image -> V2 Double -> Graphics' image font (Either NoSuchImage ())
     LoadFont :: FilePath -> Int -> Graphics' image font (Either LoadError font)
     UnloadFont :: font -> Graphics' image font ()
-    RenderText :: font -> V4 Word8 -> Text -> Graphics' image font (Either NoSuchFont image)
+    RenderText :: font -> V4 Word8 -> NonEmptyText -> Graphics' image font (Either NoSuchFont image)
     TextSize :: font -> Text -> Graphics' image font (V2 Double)
 
 data LoadError = NoSuchFile | InvalidFileFormat
@@ -77,10 +79,11 @@ withFont path fontSize = shift_ \k -> do
     k f <* unloadFont f
 
 drawText :: (SendInsBy GraphicsKey (Graphics' image font) m, MonadFail m) => font -> V4 Word8 -> V2 Double -> Text -> m ()
-drawText font color position text = do
-    Right img <- renderText font color text
-    Right () <- drawImage img position
-    pure ()
+drawText font color position text =
+    forM_ (NE.fromText text) \neText -> do
+        Right img <- renderText font color neText
+        Right () <- drawImage img position
+        pure ()
 
 data Sprite' (image :: Type) (sprite :: Type) a where
     CreateSprite :: Sprite' image sprite sprite

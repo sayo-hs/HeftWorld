@@ -26,12 +26,12 @@ import Web.KeyCode (Key (..))
 
 heftWorldUpdate :: Game image surface font
 heftWorldUpdate =
-    evalState @(V2 Double) (V2 0 0)
+    evalState @(V2 Double) (V2 400 400)
         . runShift_
         $ do
             blockGreen <- withImage "assets/block_green.bmp"
 
-            font <- withFont "/usr/share/fonts/ja-ipafonts/ipag.ttf" 20
+            font <- withFont "assets/font/Monoid/Monoid-Regular.ttf" 16
             let drawBlackText = drawText font (V4 0 0 0 255)
 
             fix \next -> do
@@ -45,9 +45,18 @@ heftWorldUpdate =
                 when (isKeyPressed ArrowDown) $ modify @(V2 Double) \(V2 x y) -> V2 x (y + speed)
                 when (isKeyPressed ArrowUp) $ modify @(V2 Double) \(V2 x y) -> V2 x (y - speed)
 
-                drawBlackText (V2 10 10) (sformat (fixed 2 % " FPS") (1 / deltaTime))
-                drawBlackText (V2 10 40) (sformat ("elapsed time: " % fixed 2 % " s") elapsedTime)
-                drawBlackText (V2 10 70) (sformat ("block position: " % shown) pos)
+                let debugTexts =
+                        [ sformat (fixed 2 % " FPS") (1 / deltaTime)
+                        , sformat ("elapsed time: " % fixed 2 % " s") elapsedTime
+                        , sformat ("block position: " % shown) pos
+                        , ""
+                        , "control:"
+                        , "    arrow keys: move"
+                        , "    space key: quit"
+                        ]
+
+                forM_ (zip [0 ..] debugTexts) \(i, text) ->
+                    drawBlackText (V2 10 (10 + i * 24)) text
 
                 unless (isKeyPressed Space) next
 

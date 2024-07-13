@@ -24,6 +24,7 @@ import Data.Free.Sum (type (+))
 import Data.Function ((&))
 import Data.Hefty.Union (Union (exhaust, inject0, weaken, weaken2, weaken3, (|+:)))
 import Data.Map (Map)
+import Data.NonEmptyText qualified as NE
 import Game.HeftWorld.IO (
     ExternalState (ExternalState, deltaTime, elapsedTime, isKeyPressed),
     Game,
@@ -191,7 +192,7 @@ runGame renderer update =
             UnloadFont font -> Font.free font
             RenderText font color text -> do
                 -- fixme: error handling
-                surface <- Font.blended font color text
+                surface <- Font.blended font color (NE.toText text)
                 Right <$> createTextureFromSurface renderer surface
             TextSize font text -> do
                 (x, y) <- Font.size font text
