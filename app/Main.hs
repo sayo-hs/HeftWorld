@@ -7,7 +7,7 @@
 module Main where
 
 import Control.Effect (type (~>))
-import Control.Effect.ExtensibleFinal ((:!!), type (!!))
+import Control.Effect.ExtensibleChurch ((:!!), type (!!))
 import Control.Effect.Handler.Heftia.Coroutine (runCoroutine)
 import Control.Effect.Handler.Heftia.Fail (runFailAsIO)
 import Control.Effect.Handler.Heftia.State (runStateIORef)
@@ -45,56 +45,49 @@ import Numeric.Natural (Natural)
 import SDL
 import SDL.Font (Font)
 import SDL.Font qualified as Font
+import SDL.Image (loadTexture)
 import Web.KeyCode qualified as Web
 
 main :: IO ()
 main = do
     initializeAll
+    Font.initialize
     window <- createWindow "HeftWorld" defaultWindow
-    appLoop window
+    renderer <- createRenderer window (-1) defaultRenderer
+    appLoop window renderer
     destroyWindow window
 
 -- | メインループ
-appLoop :: Window -> IO ()
-appLoop window =
+appLoop :: Window -> Renderer -> IO ()
+appLoop window renderer =
     runEff
         . (fmap snd . runStateIORef 0)
         . (fmap snd . runStateIORef mempty . unkeyEff)
         $ do
-            screen <- getWindowSurface window
-            pixelFormat <- surfaceFormat screen
-            void $ runLoop window =<< runGame screen pixelFormat heftWorldUpdate
+            void $ runLoop window renderer =<< runGame renderer heftWorldUpdate
 
 type GameLoopM =
-    LNop !! "sprites" #> State (Map Natural (SpriteState Surface)) + State Natural + IO
+    LNop !! "sprites" #> State (Map Natural (SpriteState Texture)) + State Natural + IO
 
-runLoop :: Window -> Status GameLoopM () KeyState a -> GameLoopM (Maybe a)
-runLoop window = \case
+runLoop :: Window -> Renderer -> Status GameLoopM () KeyState a -> GameLoopM (Maybe a)
+runLoop window renderer = \case
     Done a -> pure $ Just a
     Coroutine () k -> do
         events <- pollEvents
         if QuitEvent `elem` map eventPayload events
             then pure Nothing
             else do
-                updateWindowSurface window
                 ks <- getKeyboardState
-                next <- k $ maybe False ks . toSdlScancode
-                runLoop window next
-  where
-    {-
-    keyStateFromEvents :: [Event] -> KeyState
-    keyStateFromEvents events =
-        maybe False (`Set.member` pressedKeys) . toSdlKeycode
-      where
-        pressedKeys = flip foldMap events \event ->
-            case eventPayload event of
-                KeyboardEvent keyev ->
-                    if keyboardEventKeyMotion keyev == Pressed
-                        then Set.singleton $ keysymKeycode $ keyboardEventKeysym keyev
-                        else mempty
-                _ -> mempty
-    -}
 
+                rendererDrawColor renderer $= V4 255 255 255 255
+                clear renderer
+
+                next <- k $ maybe False ks . toSdlScancode
+
+                present renderer
+
+                runLoop window renderer next
+  where
     toSdlScancode :: Web.Key -> Maybe Scancode
     toSdlScancode = \case
         Web.ArrowDown -> Just ScancodeDown
@@ -106,11 +99,10 @@ runLoop window = \case
 
 -- | Graphicsエフェクト群をSDLの関数へと解釈
 runGame ::
-    Surface ->
-    SurfacePixelFormat ->
-    Game Surface Natural Font ->
+    Renderer ->
+    Game Texture Natural Font ->
     GameLoopM (Status GameLoopM () KeyState ())
-runGame screen screenPixelFormat update =
+runGame renderer update =
     ( ( update
             & raise3Under4
             & runSpriteAsState
@@ -122,21 +114,33 @@ runGame screen screenPixelFormat update =
             LoadImage path ->
                 liftIO $
                     do
-                        image <- loadBMP path
-                        surface <- convertSurface image screenPixelFormat
-                        pure $ Right surface
+                        tex <- loadTexture renderer path
+                        -- surface <- convertSurface image screenPixelFormat
+                        pure $ Right tex
                         `catch` \case
                             SDLCallFailed _ _ "Parameter 'src' is invalid" ->
                                 pure $ Left NoSuchFile
                             e -> throwIO e
-            UnloadImage surface -> freeSurface surface
-            DrawImage surface (V2 x y) -> do
-                _ <- surfaceBlit surface Nothing screen (Just $ P $ V2 (round x) (round y))
+            UnloadImage tex -> destroyTexture tex
+            DrawImage tex (V2 x y) -> do
+                TextureInfo {textureWidth, textureHeight} <- queryTexture tex
+                let destRect =
+                        Rectangle
+                            (P $ V2 (round x) (round y))
+                            (V2 textureWidth textureHeight)
+                copy renderer tex Nothing (Just destRect)
                 pure $ Right ()
-            LoadFont path fontSize -> error "not implemented yet"
+            LoadFont path fontSize ->
+                -- fixme: error handling
+                Right <$> Font.load path fontSize
             UnloadFont font -> Font.free font
-            RenderText font color text -> error "not implemented yet"
-            TextSize font text -> error "not implemented yet"
+            RenderText font color text -> do
+                -- fixme: error handling
+                surface <- Font.blended font color text
+                Right <$> createTextureFromSurface renderer surface
+            TextSize font text -> do
+                (x, y) <- Font.size font text
+                pure $ V2 (fromIntegral x) (fromIntegral y)
         & runFailAsIO
         & runCoroutine
 

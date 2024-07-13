@@ -12,7 +12,7 @@ module Game.HeftWorld.IO where
 
 import Control.Arrow ((>>>))
 import Control.Effect (type (<<:), type (~>))
-import Control.Effect.ExtensibleFinal ((:!!), type (!!))
+import Control.Effect.ExtensibleChurch ((:!!), type (!!))
 import Control.Effect.Handler.Heftia.Fresh (runFreshNaturalAsState)
 import Control.Effect.Handler.Heftia.KVStore (runKVStoreAsState)
 import Control.Effect.Hefty (interpret, keySubsume, raiseUnder, unkeyEff, type ($))
