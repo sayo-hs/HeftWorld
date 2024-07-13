@@ -76,6 +76,12 @@ withFont path fontSize = shift_ \k -> do
     Right f <- loadFont path fontSize
     k f <* unloadFont f
 
+drawText :: (SendInsBy GraphicsKey (Graphics' image font) m, MonadFail m) => font -> V4 Word8 -> V2 Double -> Text -> m ()
+drawText font color position text = do
+    Right img <- renderText font color text
+    Right () <- drawImage img position
+    pure ()
+
 data Sprite' (image :: Type) (sprite :: Type) a where
     CreateSprite :: Sprite' image sprite sprite
     DeleteSprite :: sprite -> Sprite' image sprite ()
@@ -160,6 +166,10 @@ eitherToFail :: (Show e, MonadFail m) => Either e a -> m a
 eitherToFail = either (fail . show) pure
 
 type Game image sprite font =
-    LNop !! Sprite image sprite + Graphics image font + Fail + Yield () KeyState $ ()
+    LNop !! Sprite image sprite + Graphics image font + Fail + Yield () ExternalState $ ()
 
-type KeyState = Keycode.Key -> Bool
+data ExternalState = ExternalState
+    { isKeyPressed :: Keycode.Key -> Bool
+    , deltaTime :: Double
+    , elapsedTime :: Double
+    }

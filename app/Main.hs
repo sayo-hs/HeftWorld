@@ -6,6 +6,7 @@
 
 module Main where
 
+import Control.Concurrent (threadDelay)
 import Control.Effect (type (~>))
 import Control.Effect.ExtensibleChurch ((:!!), type (!!))
 import Control.Effect.Handler.Heftia.Coroutine (runCoroutine)
@@ -13,7 +14,7 @@ import Control.Effect.Handler.Heftia.Fail (runFailAsIO)
 import Control.Effect.Handler.Heftia.State (runStateIORef)
 import Control.Effect.Hefty (interpret, runEff, transformAll, unkeyEff)
 import Control.Exception (catch, throwIO)
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Effect (LNop)
 import Data.Effect.Coroutine (Status (Coroutine, Done))
@@ -24,6 +25,7 @@ import Data.Function ((&))
 import Data.Hefty.Union (Union (exhaust, inject0, weaken, weaken2, weaken3, (|+:)))
 import Data.Map (Map)
 import Game.HeftWorld.IO (
+    ExternalState (ExternalState, deltaTime, elapsedTime, isKeyPressed),
     Game,
     Graphics' (
         DrawImage,
@@ -34,7 +36,6 @@ import Game.HeftWorld.IO (
         UnloadFont,
         UnloadImage
     ),
-    KeyState,
     LoadError (NoSuchFile),
     SpriteState,
     drawSprites,
@@ -42,7 +43,44 @@ import Game.HeftWorld.IO (
  )
 import Game.HeftWorld.World (heftWorldUpdate)
 import Numeric.Natural (Natural)
-import SDL
+import SDL (
+    Event (eventPayload),
+    EventPayload (QuitEvent),
+    Point (P),
+    Rectangle (Rectangle),
+    Renderer,
+    RendererType (AcceleratedVSyncRenderer),
+    SDLException (SDLCallFailed),
+    Scancode,
+    Texture,
+    TextureInfo (TextureInfo, textureHeight, textureWidth),
+    V2 (V2),
+    V4 (V4),
+    Window,
+    clear,
+    copy,
+    createRenderer,
+    createTextureFromSurface,
+    createWindow,
+    defaultRenderer,
+    defaultWindow,
+    destroyTexture,
+    destroyWindow,
+    getKeyboardState,
+    initializeAll,
+    pollEvents,
+    present,
+    queryTexture,
+    rendererDrawColor,
+    rendererType,
+    time,
+    ($=),
+    pattern ScancodeDown,
+    pattern ScancodeLeft,
+    pattern ScancodeRight,
+    pattern ScancodeSpace,
+    pattern ScancodeUp,
+ )
 import SDL.Font (Font)
 import SDL.Font qualified as Font
 import SDL.Image (loadTexture)
@@ -53,7 +91,7 @@ main = do
     initializeAll
     Font.initialize
     window <- createWindow "HeftWorld" defaultWindow
-    renderer <- createRenderer window (-1) defaultRenderer
+    renderer <- createRenderer window (-1) $ defaultRenderer {rendererType = AcceleratedVSyncRenderer}
     appLoop window renderer
     destroyWindow window
 
@@ -64,13 +102,16 @@ appLoop window renderer =
         . (fmap snd . runStateIORef 0)
         . (fmap snd . runStateIORef mempty . unkeyEff)
         $ do
-            void $ runLoop window renderer =<< runGame renderer heftWorldUpdate
+            startTime <- time
+            void $
+                runLoop window renderer startTime startTime
+                    =<< runGame renderer heftWorldUpdate
 
 type GameLoopM =
     LNop !! "sprites" #> State (Map Natural (SpriteState Texture)) + State Natural + IO
 
-runLoop :: Window -> Renderer -> Status GameLoopM () KeyState a -> GameLoopM (Maybe a)
-runLoop window renderer = \case
+runLoop :: Window -> Renderer -> Double -> Double -> Status GameLoopM () ExternalState a -> GameLoopM (Maybe a)
+runLoop window renderer startTime prevTime = \case
     Done a -> pure $ Just a
     Coroutine () k -> do
         events <- pollEvents
@@ -82,11 +123,26 @@ runLoop window renderer = \case
                 rendererDrawColor renderer $= V4 255 255 255 255
                 clear renderer
 
-                next <- k $ maybe False ks . toSdlScancode
+                t <- time
+                let exst =
+                        ExternalState
+                            { isKeyPressed = maybe False ks . toSdlScancode
+                            , deltaTime = t - prevTime
+                            , elapsedTime = t - startTime
+                            }
+                next <- k exst
 
                 present renderer
 
-                runLoop window renderer next
+                let waitForNextFrameByFPS (fps :: Double) = do
+                        t' <- time
+                        let delayTime = (t + 1 / fps) - t'
+                        when (delayTime > 0) do
+                            liftIO $ threadDelay (round $ delayTime * 1000_000)
+
+                waitForNextFrameByFPS 60
+
+                runLoop window renderer startTime t next
   where
     toSdlScancode :: Web.Key -> Maybe Scancode
     toSdlScancode = \case
@@ -101,7 +157,7 @@ runLoop window renderer = \case
 runGame ::
     Renderer ->
     Game Texture Natural Font ->
-    GameLoopM (Status GameLoopM () KeyState ())
+    GameLoopM (Status GameLoopM () ExternalState ())
 runGame renderer update =
     ( ( update
             & raise3Under4
@@ -115,7 +171,6 @@ runGame renderer update =
                 liftIO $
                     do
                         tex <- loadTexture renderer path
-                        -- surface <- convertSurface image screenPixelFormat
                         pure $ Right tex
                         `catch` \case
                             SDLCallFailed _ _ "Parameter 'src' is invalid" ->
